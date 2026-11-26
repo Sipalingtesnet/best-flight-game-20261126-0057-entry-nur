@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Canyon Courier — a golden-hour cargo run</title>
+<meta name="description" content="Canyon Courier: fly a rugged STOL cargo plane through a sun-baked desert canyon at golden hour, delivering supply crates to remote mesa-top outposts." />
+<style>
+  /* The page is the game and nothing else: one WebGL canvas, one 2D HUD canvas over it, and a
+     menu card that the game hides as soon as a sortie starts. Every colour is the game's own
+     amber-on-smoked-glass palette, so the chrome and the instruments read as one machine. */
+  :root {
+    --ink: #ffd89a;
+    --ink-dim: rgba(255, 216, 158, 0.62);
+    --ink-faint: rgba(255, 216, 158, 0.24);
+    --glass: rgba(18, 14, 12, 0.72);
+    --rust: #c4552f;
+    --hot: #ff9a4a;
+    --good: #9ce0a0;
+    --bad: #ff5c4a;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #1a1512;
+    color: var(--ink);
+    font-family: var(--mono);
+    -webkit-font-smoothing: antialiased;
+  }
+  #scene, #hud {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+  #hud { pointer-events: none; z-index: 2; }
+  #scene { z-index: 1; cursor: grab; touch-action: none; }
+  #scene:active { cursor: grabbing; }
+
+  /* ---- the menu card ---- */
+  #menu {
+    position: fixed;
+    z-index: 5;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(760px, calc(100vw - 40px));
+    max-height: calc(100vh - 40px);
+    overflow: auto;
+    background: linear-gradient(180deg, rgba(26, 21, 18, 0.94), rgba(18, 14, 12, 0.96));
+    border: 1px solid var(--ink-faint);
+    border-radius: 3px;
+    padding: 26px 30px 22px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 216, 158, 0.12);
+  }
+  #menu.hidden { display: none; }
+  #menu .tag {
+    display: inline-block;
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: #1a1512;
+    background: var(--rust);
+    padding: 4px 9px;
+    border-radius: 2px;
+    font-weight: 700;
+  }
+  #menu h1 {
+    margin: 14px 0 2px;
+    font-size: clamp(30px, 5.2vw, 46px);
+    letter-spacing: 0.03em;
+    line-height: 1;
+    color: #ffe9c0;
+    text-shadow: 0 3px 18px rgba(255, 154, 74, 0.28);
+  }
+  #menu .sub {
+    margin: 8px 0 18px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink-dim);
+    max-width: 60ch;
+  }
+  #menu .missions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 0 0 16px;
+  }
+  @media (max-width: 620px) { #menu .missions { grid-template-columns: 1fr; } }
+  #menu .mission {
+    text-align: left;
+    font-family: var(--mono);
+    color: var(--ink);
+    background: rgba(255, 216, 158, 0.05);
+    border: 1px solid var(--ink-faint);
+    border-radius: 2px;
+    padding: 11px 12px 12px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+  }
+  #menu .mission:hover, #menu .mission:focus-visible {
+    background: rgba(255, 154, 74, 0.13);
+    border-color: rgba(255, 154, 74, 0.6);
+    transform: translateY(-1px);
+    outline: none;
+  }
+  #menu .mission .num { font-size: 10px; color: var(--hot); letter-spacing: 0.16em; }
+  #menu .mission .name { display: block; margin: 5px 0 4px; font-size: 14px; font-weight: 700; letter-spacing: 0.02em; }
+  #menu .mission .line { display: block; font-size: 10.5px; line-height: 1.5; color: var(--ink-dim); }
+  #menu .controls {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 5px 14px;
+    font-size: 11px;
+    color: var(--ink-dim);
+    border-top: 1px solid var(--ink-faint);
+    padding-top: 14px;
+  }
+  #menu .controls b { color: var(--ink); font-weight: 600; }
+  #menu .row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  #menu button.plain {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    color: var(--ink);
+    background: transparent;
+    border: 1px solid var(--ink-faint);
+    border-radius: 2px;
+    padding: 8px 13px;
+    cursor: pointer;
+  }
+  #menu button.plain:hover { border-color: rgba(255, 154, 74, 0.7); color: #ffe9c0; }
+  #menu .foot { margin-top: 12px; font-size: 10px; color: rgba(255, 216, 158, 0.4); letter-spacing: 0.06em; }
+  .noscript { position: fixed; inset: 0; display: grid; place-items: center; background: #1a1512; z-index: 9; }
+</style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+  <canvas id="hud"></canvas>
+
+  <div id="menu">
+    <span class="tag">Mesa Freight · Sortie Board</span>
+    <h1>CANYON COURIER</h1>
+    <p class="sub">
+      Golden hour over the Redwater gorge. You fly the Courier — a slab-sided STOL freighter with
+      a tired engine and a full belly of crates — down a canyon of red-rock mesas, rock arches and
+      a river a long way below. Three sorties, one airframe, and just enough fuel if you fly it right.
+    </p>
+    <div class="missions">
+      <button class="mission" data-mission="delivery">
+        <span class="num">01</span>
+        <span class="name">Delivery Run</span>
+        <span class="line">Three crates, three mesa strips. Drop low over the beacon, then land to refuel.</span>
+      </button>
+      <button class="mission" data-mission="slalom">
+        <span class="num">02</span>
+        <span class="name">Arch Slalom</span>
+        <span class="line">Eight rock arches in order, against the clock. Thread them or lose the run.</span>
+      </button>
+      <button class="mission" data-mission="rescue">
+        <span class="num">03</span>
+        <span class="name">Dust Storm Rescue</span>
+        <span class="line">One far outpost, low visibility, a third of a tank. Fly lean and put it down.</span>
+      </button>
+    </div>
+    <div class="controls">
+      <b>ARROWS / WASD</b><span>pitch and bank</span>
+      <b>SHIFT / CTRL</b><span>throttle up and down</span>
+      <b>SPACE</b><span>drop crate (mission 1) · airbrake (missions 2 and 3)</span>
+      <b>C</b><span>chase view / cockpit view</span>
+      <b>R · M · P</b><span>restart · menu · pause</span>
+      <b>MOUSE</b><span>drag to look around, wheel to zoom the chase camera</span>
+    </div>
+    <div class="row">
+      <button class="plain" id="start-selected">FLY DELIVERY RUN</button>
+      <button class="plain" id="toggle-view">TOGGLE VIEW</button>
+      <button class="plain" id="toggle-sound">SOUND ON</button>
+    </div>
+    <div class="foot">1 2 3 pick a sortie · every instrument reads the flight model · no network, no assets, all sound synthesised</div>
+  </div>
+
+  <noscript><div class="noscript">Canyon Courier needs JavaScript and WebGL.</div></noscript>
+
+  <script src="vendor/three.min.js"></script>
+  <script type="module">
+    import { bootGame } from './src/main.js';
+    bootGame();
+  </script>
+</body>
+</html>
